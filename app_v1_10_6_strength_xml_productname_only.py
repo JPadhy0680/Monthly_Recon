@@ -753,14 +753,14 @@ with tab1:
                         observed_strengths = ingredient_strengths or product_name_strengths
 
                         if ingredient_strengths:
-                            parts.append(f"XML Ingredient Strength: {format_strength_tuple(ingredient_strengths)}")
+                            parts.append(f"Ingredient Strength: {format_strength_tuple(ingredient_strengths)}")
                         if product_name_strengths:
                             parts.append(f"Product Name Strength: {format_strength_tuple(product_name_strengths)}")
 
                         if ingredient_strengths and product_name_strengths and ingredient_strengths != product_name_strengths:
                             comments.append(
                                 f"Product strength mismatch between XML ingredient field and product name for {display_name_for_detail}: "
-                                f"XML ingredient strength {format_strength_tuple(ingredient_strengths)} vs "
+                                f"ingredient strength {format_strength_tuple(ingredient_strengths)} vs "
                                 f"product name strength {format_strength_tuple(product_name_strengths)}."
                             )
 
