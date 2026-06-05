@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 from io import BytesIO
 
-st.set_page_config(page_title="MHRA Summary Generator", layout="wide")
+st.set_page_config(page_title="Data Summary Generator", layout="wide")
 
 st.title("📊 Data Summary Generator")
 
@@ -19,14 +19,6 @@ if uploaded_file:
     # ✅ Clean columns
     df.columns = df.columns.str.strip()
 
-    required_cols = ['Download Date', 'Source', 'MHRA ID', 'Validity']
-    missing = [c for c in required_cols if c not in df.columns]
-
-    if missing:
-        st.error(f"Missing columns: {missing}")
-        st.stop()
-
-    # ✅ Convert date
     df['Download Date'] = pd.to_datetime(df['Download Date'], errors='coerce')
     df = df.dropna(subset=['Download Date'])
 
@@ -38,18 +30,33 @@ if uploaded_file:
 
         group = group.sort_values(by='Download Date')
 
-        unique_dates = (
-            group['Download Date']
-            .drop_duplicates()
-            .sort_values()
-            .reset_index(drop=True)
-        )
+        unique_dates = group['Download Date'].drop_duplicates().reset_index(drop=True)
 
         for i in range(len(unique_dates)):
+
             current_date = unique_dates[i]
 
-            # ✅ SOURCE-BASED DATE LOGIC
+            # ✅ COUNTING DATA (default)
+            subset = group[group['Download Date'] == current_date]
 
+            total_count = len(subset)
+            valid_count = (subset['Validity'] == 'Valid').sum()
+            non_valid_count = (subset['Validity'] == 'Non-Valid').sum()
+
+            # ✅ CHECK: "No report received" or invalid ID
+            no_report_flag = False
+
+            if source.upper() == "ADIS":
+
+                if (
+                    subset.empty
+                    or subset['MHRA ID'].isna().all()
+                    or subset['MHRA ID'].astype(str).str.strip().eq('').all()
+                    or subset.astype(str).apply(lambda x: x.str.contains("No report received", case=False, na=False)).any().any()
+                ):
+                    no_report_flag = True
+
+            # ✅ DATE LOGIC
             if source.upper() == "MHRA":
 
                 if i == 0:
@@ -66,43 +73,46 @@ if uploaded_file:
 
             elif source.upper() == "ADIS":
 
-                # ✅ Find previous Monday
-                weekday = current_date.weekday()  # Monday = 0
+                weekday = current_date.weekday()
                 from_date = current_date - pd.Timedelta(days=weekday)
                 to_date = current_date
 
             else:
-                # ✅ Other sources → blank
                 from_date = None
                 to_date = None
 
-            # ✅ COUNTING LOGIC (per your requirement)
-            subset = group[group['Download Date'] == current_date]
-
-            total_count = len(subset)
-            valid_count = (subset['Validity'] == 'Valid').sum()
-            non_valid_count = (subset['Validity'] == 'Non-Valid').sum()
-
-            summary_data.append({
-                'Downloaded Date': current_date,
-                'Source': source,
-                'From': from_date,
-                'To': to_date,
-                'Total Number': total_count,
-                'Valid': valid_count,
-                'Non-Valid': non_valid_count
-            })
+            # ✅ APPLY SPECIAL LOGIC FOR ADIS
+            if no_report_flag:
+                summary_data.append({
+                    'Downloaded Date': current_date,
+                    'Source': source,
+                    'From': from_date,
+                    'To': to_date,
+                    'Total Number': "No Report Received",
+                    'Valid': "No Report Received",
+                    'Non-Valid': "No Report Received"
+                })
+            else:
+                summary_data.append({
+                    'Downloaded Date': current_date,
+                    'Source': source,
+                    'From': from_date,
+                    'To': to_date,
+                    'Total Number': total_count,
+                    'Valid': valid_count,
+                    'Non-Valid': non_valid_count
+                })
 
     summary = pd.DataFrame(summary_data)
 
-    # ✅ Format dates safely
+    # ✅ Format dates
     for col in ['Downloaded Date', 'From', 'To']:
         summary[col] = pd.to_datetime(summary[col], errors='coerce').dt.strftime('%d-%b-%y')
 
     st.success("✅ Summary Generated Successfully")
     st.dataframe(summary, use_container_width=True)
 
-    # ✅ Download
+    # ✅ Excel Output
     output = BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         summary.to_excel(writer, index=False, sheet_name='Summary')
@@ -110,8 +120,8 @@ if uploaded_file:
     output.seek(0)
 
     st.download_button(
-        label="⬇️ Download Summary Excel",
+        label="⬇️ Download Excel",
         data=output,
-        file_name="Summary_Output.xlsx",
+        file_name="Final_Summary.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
