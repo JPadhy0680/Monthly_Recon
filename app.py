@@ -19,6 +19,14 @@ if uploaded_file:
     # ✅ Clean columns
     df.columns = df.columns.str.strip()
 
+    required_cols = ['Download Date', 'Source', 'MHRA ID', 'Validity']
+    missing = [c for c in required_cols if c not in df.columns]
+
+    if missing:
+        st.error(f"Missing columns: {missing}")
+        st.stop()
+
+    # ✅ Convert dates
     df['Download Date'] = pd.to_datetime(df['Download Date'], errors='coerce')
     df = df.dropna(subset=['Download Date'])
 
@@ -30,31 +38,33 @@ if uploaded_file:
 
         group = group.sort_values(by='Download Date')
 
-        unique_dates = group['Download Date'].drop_duplicates().reset_index(drop=True)
+        unique_dates = (
+            group['Download Date']
+            .drop_duplicates()
+            .sort_values()
+            .reset_index(drop=True)
+        )
 
         for i in range(len(unique_dates)):
-
             current_date = unique_dates[i]
 
-            # ✅ COUNTING DATA (default)
             subset = group[group['Download Date'] == current_date]
 
-            total_count = len(subset)
-            valid_count = (subset['Validity'] == 'Valid').sum()
-            non_valid_count = (subset['Validity'] == 'Non-Valid').sum()
-
-            # ✅ CHECK: "No report received" or invalid ID
+            # ✅ ✅ DETECT NO REPORT RECEIVED
             no_report_flag = False
 
-            if source.upper() == "ADIS":
+            # Check text anywhere
+            if subset.astype(str).apply(
+                lambda col: col.str.contains("No Report Received", case=False, na=False)
+            ).any().any():
+                no_report_flag = True
 
-                if (
-                    subset.empty
-                    or subset['MHRA ID'].isna().all()
-                    or subset['MHRA ID'].astype(str).str.strip().eq('').all()
-                    or subset.astype(str).apply(lambda x: x.str.contains("No report received", case=False, na=False)).any().any()
-                ):
-                    no_report_flag = True
+            # Check MHRA ID missing/invalid
+            elif (
+                subset['MHRA ID'].isna().all()
+                or subset['MHRA ID'].astype(str).str.strip().eq('').all()
+            ):
+                no_report_flag = True
 
             # ✅ DATE LOGIC
             if source.upper() == "MHRA":
@@ -71,9 +81,9 @@ if uploaded_file:
                     from_date = prev_date
                     to_date = current_date - pd.Timedelta(days=1)
 
-            elif source.upper() == "ADIS":
+            elif source.upper() in ["ADIS", "NA"]:
 
-                weekday = current_date.weekday()
+                weekday = current_date.weekday()  # Monday = 0
                 from_date = current_date - pd.Timedelta(days=weekday)
                 to_date = current_date
 
@@ -81,8 +91,9 @@ if uploaded_file:
                 from_date = None
                 to_date = None
 
-            # ✅ APPLY SPECIAL LOGIC FOR ADIS
+            # ✅ FINAL OUTPUT ROW
             if no_report_flag:
+
                 summary_data.append({
                     'Downloaded Date': current_date,
                     'Source': source,
@@ -92,7 +103,13 @@ if uploaded_file:
                     'Valid': "No Report Received",
                     'Non-Valid': "No Report Received"
                 })
+
             else:
+
+                total_count = len(subset)
+                valid_count = (subset['Validity'] == 'Valid').sum()
+                non_valid_count = (subset['Validity'] == 'Non-Valid').sum()
+
                 summary_data.append({
                     'Downloaded Date': current_date,
                     'Source': source,
@@ -103,16 +120,17 @@ if uploaded_file:
                     'Non-Valid': non_valid_count
                 })
 
+    # ✅ Create dataframe
     summary = pd.DataFrame(summary_data)
 
-    # ✅ Format dates
+    # ✅ Format dates safely
     for col in ['Downloaded Date', 'From', 'To']:
         summary[col] = pd.to_datetime(summary[col], errors='coerce').dt.strftime('%d-%b-%y')
 
     st.success("✅ Summary Generated Successfully")
     st.dataframe(summary, use_container_width=True)
 
-    # ✅ Excel Output
+    # ✅ Download Excel
     output = BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         summary.to_excel(writer, index=False, sheet_name='Summary')
