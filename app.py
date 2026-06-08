@@ -3,45 +3,56 @@ import pandas as pd
 from io import BytesIO
 
 st.set_page_config(page_title="Data Summary Generator", layout="wide")
-
 st.title("📊 Data Summary Generator")
 
 uploaded_file = st.file_uploader("Upload Excel File", type=["xlsx"])
 
 if uploaded_file:
-
     df = pd.read_excel(uploaded_file, engine="openpyxl")
 
-    df.columns = df.columns.str.strip()
+    # ✅ Clean column names
+    df.columns = df.columns.str.strip().str.lower()
 
-    df['Download Date'] = pd.to_datetime(df['Download Date'], errors='coerce')
-    df = df.dropna(subset=['Download Date'])
+    # ✅ Flexible column detection (supports both old + new headers)
+    date_col = None
+    for col in df.columns:
+        if col in ['download date', 'receipt date']:
+            date_col = col
+            break
 
-    # ✅ SORT ONLY BY DATE (NOT SOURCE)
-    df = df.sort_values(by=['Download Date'])
+    if date_col is None:
+        st.error(f"No valid date column found. Columns: {df.columns.tolist()}")
+        st.stop()
+
+    # ✅ Convert to datetime
+    df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
+
+    # ✅ Drop invalid dates
+    df = df.dropna(subset=[date_col])
+
+    # ✅ Sort by date
+    df = df.sort_values(by=[date_col])
 
     summary_data = []
 
-    # ✅ GROUP ONLY BY DOWNLOAD DATE
-    unique_dates = df['Download Date'].drop_duplicates().reset_index(drop=True)
+    # ✅ Unique dates
+    unique_dates = df[date_col].drop_duplicates().reset_index(drop=True)
 
     for i in range(len(unique_dates)):
-
         current_date = unique_dates[i]
+        subset = df[df[date_col] == current_date]
 
-        subset = df[df['Download Date'] == current_date]
-
-        # ✅ ✅ GLOBAL "NO REPORT RECEIVED" CHECK
+        # ✅ Global "No Report Received" check
         no_report_flag = subset.astype(str).apply(
             lambda col: col.str.contains("No Report Received", case=False, na=False)
         ).any().any()
 
-        # ✅ PICK SOURCE (first value of that date)
-        source = str(subset['Source'].iloc[0]).upper()
+        # ✅ Normalize Source column
+        source_col = next((col for col in df.columns if col == 'source'), None)
+        source = str(subset[source_col].iloc[0]).upper() if source_col else "UNKNOWN"
 
-        # ✅ DATE LOGIC
+        # ✅ Date logic
         if source == "MHRA":
-
             if i == 0:
                 if current_date.day_name() == 'Monday':
                     from_date = current_date - pd.Timedelta(days=3)
@@ -63,11 +74,12 @@ if uploaded_file:
             from_date = None
             to_date = None
 
-        # ✅ FINAL OUTPUT
-        if no_report_flag:
+        # ✅ Validity column handling
+        validity_col = next((col for col in df.columns if col == 'validity'), None)
 
+        if no_report_flag:
             summary_data.append({
-                'Downloaded Date': current_date,
+                'Receipt Date': current_date,
                 'Source': source,
                 'From': from_date,
                 'To': to_date,
@@ -75,15 +87,13 @@ if uploaded_file:
                 'Valid': "No Report Received",
                 'Non-Valid': "No Report Received"
             })
-
         else:
-
             total = len(subset)
-            valid = (subset['Validity'] == 'Valid').sum()
-            non_valid = (subset['Validity'] == 'Non-Valid').sum()
+            valid = (subset[validity_col] == 'Valid').sum() if validity_col else 0
+            non_valid = (subset[validity_col] == 'Non-Valid').sum() if validity_col else 0
 
             summary_data.append({
-                'Downloaded Date': current_date,
+                'Receipt Date': current_date,
                 'Source': source,
                 'From': from_date,
                 'To': to_date,
@@ -94,13 +104,14 @@ if uploaded_file:
 
     summary = pd.DataFrame(summary_data)
 
-    # ✅ FORMAT DATES
-    for col in ['Downloaded Date', 'From', 'To']:
+    # ✅ Format dates
+    for col in ['Receipt Date', 'From', 'To']:
         summary[col] = pd.to_datetime(summary[col], errors='coerce').dt.strftime('%d-%b-%y')
 
+    # ✅ Show table
     st.dataframe(summary, use_container_width=True)
 
-    # ✅ DOWNLOAD
+    # ✅ Download
     output = BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         summary.to_excel(writer, index=False)
